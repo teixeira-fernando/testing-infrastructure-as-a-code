@@ -1,0 +1,97 @@
+name: Terraform Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  terraform-tests:
+    name: Run Terraform Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Start LocalStack ──────────────────────────────────────────────────
+      - name: Start LocalStack
+        run: |
+          docker compose -f localstack/docker-compose.yml up -d
+        working-directory: ${{ github.workspace }}
+
+      # ── Wait for LocalStack to be healthy ─────────────────────────────────
+      - name: Wait for LocalStack to be ready
+        run: |
+          echo "Waiting for LocalStack health endpoint..."
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s http://localhost:4566/_localstack/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || echo "")
+            if [ "$STATUS" = "running" ]; then
+              echo "LocalStack is ready!"
+              break
+            fi
+            echo "  Attempt $i/30 — waiting 5 s..."
+            sleep 5
+          done
+          # Final check — fail fast if LocalStack never became healthy
+          curl -f http://localhost:4566/_localstack/health || (echo "LocalStack did not become healthy in time" && exit 1)
+
+      # ── Install Terraform ──────────────────────────────────────────────────
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.8"
+
+      # ── Validate S3 module ────────────────────────────────────────────────
+      - name: Terraform Init — S3 module
+        run: terraform init
+        working-directory: modules/s3-bucket
+
+      - name: Terraform Validate — S3 module
+        run: terraform validate
+        working-directory: modules/s3-bucket
+
+      # ── Validate SQS module ───────────────────────────────────────────────
+      - name: Terraform Init — SQS module
+        run: terraform init
+        working-directory: modules/sqs-queue
+
+      - name: Terraform Validate — SQS module
+        run: terraform validate
+        working-directory: modules/sqs-queue
+
+      # ── S3 tests ──────────────────────────────────────────────────────────
+      - name: Terraform Init — S3 tests
+        run: terraform init
+        working-directory: tests/s3
+
+      - name: Terraform Test — S3
+        run: terraform test
+        working-directory: tests/s3
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+
+      # ── SQS tests ─────────────────────────────────────────────────────────
+      - name: Terraform Init — SQS tests
+        run: terraform init
+        working-directory: tests/sqs
+
+      - name: Terraform Test — SQS
+        run: terraform test
+        working-directory: tests/sqs
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+
+      # ── Show LocalStack logs on failure ───────────────────────────────────
+      - name: Print LocalStack logs (on failure)
+        if: failure()
+        run: docker compose -f localstack/docker-compose.yml logs
+        working-directory: ${{ github.workspace }}
