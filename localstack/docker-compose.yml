@@ -1,0 +1,33 @@
+version: "3.8"
+
+services:
+  localstack:
+    image: localstack/localstack:3.4
+    container_name: localstack
+    ports:
+      - "4566:4566"   # LocalStack Gateway (all services on one port)
+    environment:
+      # Services to enable
+      - SERVICES=s3,sqs
+      # Enable debug logging for easier troubleshooting
+      - DEBUG=1
+      # Persist data between container restarts (optional)
+      - DATA_DIR=/var/lib/localstack/data
+      # Allow Terraform's AWS provider path-style S3 access
+      - LEGACY_DIRECTORIES=1
+    volumes:
+      # Mount init scripts so LocalStack runs them on startup
+      - "./init-scripts:/etc/localstack/init/ready.d"
+      # Persist LocalStack data (optional — remove if you want a clean slate each run)
+      - "localstack-data:/var/lib/localstack"
+      # Required for Docker-in-Docker features (optional for basic S3/SQS usage)
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  localstack-data:
